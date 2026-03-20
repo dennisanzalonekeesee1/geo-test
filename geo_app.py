@@ -7,7 +7,7 @@ import plotly.express as px
 st.set_page_config(page_title="Geo-Test Matchmaker", layout="wide")
 
 st.title("📍 Geo-Test Matchmaker & Randomizer")
-st.markdown("Automate your DMA trimming, daily/weekly correlation waterfall, and randomization.")
+st.markdown("Automate your DMA trimming, daily/weekly/monthly correlation waterfall, randomization, and test duration planning.")
 
 # --- SIDEBAR: UPLOADS & SETTINGS ---
 with st.sidebar:
@@ -15,11 +15,18 @@ with st.sidebar:
     sales_file = st.file_uploader("Upload Shopify Sales", type=["csv", "xlsx"])
     zip_dma_file = st.file_uploader("Upload Zip-to-DMA Dict", type=["csv", "xlsx"])
     
-    st.header("2. Settings")
+    st.header("2. Match Settings")
     min_corr = st.slider("Target Correlation Threshold", 0.70, 0.99, 0.85, 0.01)
     
+    # NEW: GA4 Time Lag Input
+    st.header("3. Adstock & Timing")
+    ga4_time_lag = st.number_input(
+        "GA4 Time Lag (Days to Purchase)", 
+        min_value=1, max_value=90, value=7, step=1,
+        help="How many days does it typically take a user to convert after an ad click? Found in GA4."
+    )
+    
     st.markdown("### Verify Column Names")
-    # Updated default names to match your files automatically!
     date_col = st.text_input("Date Column (Sales)", "Day")
     zip_col = st.text_input("Zip Code Column (Sales)", "Shipping postal code")
     sales_col = st.text_input("Sales Column (Sales)", "Gross sales")
@@ -27,8 +34,6 @@ with st.sidebar:
     dict_zip_col = st.text_input("Zip Column (Dictionary)", "zip_code")
 
 # --- CACHED FUNCTIONS FOR SPEED & STABILITY ---
-# @st.cache_data tells the app to "memorize" the math so it doesn't re-flip the coins!
-
 @st.cache_data
 def load_data(sales_file, zip_dma_file):
     df_sales = pd.read_csv(sales_file) if sales_file.name.endswith('.csv') else pd.read_excel(sales_file)
@@ -37,7 +42,6 @@ def load_data(sales_file, zip_dma_file):
 
 @st.cache_data
 def process_data(df_sales_raw, df_map_raw, date_col, zip_col, sales_col, dma_col, dict_zip_col, min_corr):
-    # Make copies to prevent altering the cached original data
     df_sales = df_sales_raw.copy()
     df_map = df_map_raw.copy()
     
@@ -46,8 +50,8 @@ def process_data(df_sales_raw, df_map_raw, date_col, zip_col, sales_col, dma_col
     df_sales[sales_col] = pd.to_numeric(df_sales[sales_col].astype(str).str.replace(r'[$,]', '', regex=True), errors='coerce').fillna(0)
     df_sales = df_sales[df_sales[sales_col] > 0] 
     
-    # Clean Zip Codes 
-    df_sales['Clean_Zip'] = df_sales[zip_col].astype(str).str.extract(r'(\d{5})')[0]
+    # INDESTRUCTIBLE ZIP CODE FIX (Extracts 4 or 5 digits, fixes Excel's dropped zeros)
+    df_sales['Clean_Zip'] = df_sales[zip_col].astype(str).str.extract(r'(\d{4,5})')[0].str.zfill(5)
     df_map['Clean_Zip'] = df_map[dict_zip_col].astype(str).str.zfill(5)
     
     df = pd.merge(df_sales, df_map, on='Clean_Zip', how='inner')
@@ -66,7 +70,7 @@ def process_data(df_sales_raw, df_map_raw, date_col, zip_col, sales_col, dma_col
         
     df_filtered = df[df[dma_col].isin(valid_dmas)]
     
-    # Create Daily Pivot
+    # Create Base Daily Pivot
     daily_pivot = df_filtered.pivot_table(index=date_col, columns=dma_col, values=sales_col, aggfunc='sum').fillna(0)
     
     def find_pairs(df_pivot, min_corr):
@@ -94,20 +98,31 @@ def process_data(df_sales_raw, df_map_raw, date_col, zip_col, sales_col, dma_col
                 paired.update([d1, d2])
         return pairs, paired
 
-    # Pass 1: Daily Matches
+    # WATERFALL PASS 1: Daily Matches
     daily_pairs, daily_paired_dmas = find_pairs(daily_pivot, min_corr)
     for p in daily_pairs: p['Matched_On'] = 'Daily'
     
-    # Pass 2: Weekly Fallback
-    leftover_dmas = [d for d in valid_dmas if d not in daily_paired_dmas]
+    # WATERFALL PASS 2: Weekly Fallback
+    leftover_dmas_1 = [d for d in valid_dmas if d not in daily_paired_dmas]
     weekly_pairs = []
+    weekly_paired_dmas = set()
     
-    if len(leftover_dmas) > 1:
-        weekly_pivot = daily_pivot[leftover_dmas].resample('W-MON').sum()
+    if len(leftover_dmas_1) > 1:
+        weekly_pivot = daily_pivot[leftover_dmas_1].resample('W-MON').sum()
         weekly_pairs, weekly_paired_dmas = find_pairs(weekly_pivot, min_corr)
         for p in weekly_pairs: p['Matched_On'] = 'Weekly'
 
-    all_pairs = daily_pairs + weekly_pairs
+    # WATERFALL PASS 3: Monthly Fallback
+    leftover_dmas_2 = [d for d in leftover_dmas_1 if d not in weekly_paired_dmas]
+    monthly_pairs = []
+    
+    if len(leftover_dmas_2) > 1:
+        monthly_pivot = daily_pivot[leftover_dmas_2].resample('MS').sum() # 'MS' = Month Start grouping
+        monthly_pairs, _ = find_pairs(monthly_pivot, min_corr)
+        for p in monthly_pairs: p['Matched_On'] = 'Monthly'
+
+    # Combine all results
+    all_pairs = daily_pairs + weekly_pairs + monthly_pairs
     results_df = pd.DataFrame(all_pairs)
     
     if not results_df.empty:
@@ -115,16 +130,16 @@ def process_data(df_sales_raw, df_map_raw, date_col, zip_col, sales_col, dma_col
         results_df.index.name = 'Pair_ID'
         results_df = results_df.reset_index()
         
-    return results_df, daily_pivot, leftover_dmas, trim_msg, trim_success
+    return results_df, daily_pivot, trim_msg, trim_success
 
 # --- MAIN LOGIC ---
 if sales_file and zip_dma_file:
-    with st.spinner("Processing data..."):
+    with st.spinner("Processing data through Daily/Weekly/Monthly waterfall..."):
         # Load Data
         df_sales_raw, df_map_raw = load_data(sales_file, zip_dma_file)
         
         # Run Cached Processing
-        results_df, daily_pivot, leftover_dmas, trim_msg, trim_success = process_data(
+        results_df, daily_pivot, trim_msg, trim_success = process_data(
             df_sales_raw, df_map_raw, date_col, zip_col, sales_col, dma_col, dict_zip_col, min_corr
         )
         
@@ -140,11 +155,13 @@ if sales_file and zip_dma_file:
     if not results_df.empty:
         daily_count = len(results_df[results_df['Matched_On'] == 'Daily'])
         weekly_count = len(results_df[results_df['Matched_On'] == 'Weekly'])
+        monthly_count = len(results_df[results_df['Matched_On'] == 'Monthly'])
         
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Total Pairs Found", len(results_df))
-        col2.metric("Matched on Daily", daily_count)
-        col3.metric("Matched on Weekly Fallback", weekly_count)
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Total Pairs", len(results_df))
+        col2.metric("Matched Daily", daily_count)
+        col3.metric("Matched Weekly", weekly_count)
+        col4.metric("Matched Monthly", monthly_count)
         
         st.dataframe(results_df, use_container_width=True)
         
@@ -160,16 +177,43 @@ if sales_file and zip_dma_file:
         c_dma = results_df.iloc[selected_idx]['Control_DMA']
         matched_on = results_df.iloc[selected_idx]['Matched_On']
         
-        plot_data = daily_pivot if matched_on == 'Daily' else daily_pivot[leftover_dmas].resample('W-MON').sum()
-        chart_data = plot_data[[t_dma, c_dma]].reset_index()
+        # Dynamic charting based on how they matched
+        chart_data = daily_pivot[[t_dma, c_dma]]
+        if matched_on == 'Weekly':
+            chart_data = chart_data.resample('W-MON').sum()
+        elif matched_on == 'Monthly':
+            chart_data = chart_data.resample('MS').sum()
+            
+        chart_data = chart_data.reset_index()
         
         fig = px.line(chart_data, x=date_col, y=[t_dma, c_dma], 
                       title=f"Historical Sales ({matched_on}): Treatment vs Control",
                       labels={'value': 'Gross Sales', 'variable': 'Assignment'})
         st.plotly_chart(fig, use_container_width=True)
         
-        # Step 4: Export
-        st.header("Step 4: Export Test Design")
+        # --- NEW SECTION: TEST LENGTH & COOLDOWN ---
+        st.header("Step 4: Flighting & Measurement Recommendations")
+        
+        # Industry rule of thumb: Test should run for at least 4 weeks (28 days) to capture seasonality, 
+        # OR 2x the time lag (rounded up to full weeks).
+        # Cooldown should be exactly the time lag to capture delayed conversions.
+        calc_test_days = max(28, int(np.ceil((ga4_time_lag * 2) / 7.0) * 7)) 
+        calc_cooldown = int(ga4_time_lag)
+        
+        st.info(f"💡 Based on your GA4 Time Lag of **{ga4_time_lag} days**, here is your mathematically optimal Geo-Test Timeline:")
+        
+        t_col1, t_col2, t_col3 = st.columns(3)
+        t_col1.metric("Phase 1: Active Ads", f"{calc_test_days} Days ({calc_test_days//7} Weeks)")
+        t_col2.metric("Phase 2: Cooldown", f"{calc_cooldown} Days")
+        t_col3.metric("Total Measurement Window", f"{calc_test_days + calc_cooldown} Days")
+        
+        st.markdown(f"""
+        * **Phase 1 (Active Ads):** Run your campaigns in the Treatment DMAs for **{calc_test_days} days**. This captures full day-of-week seasonality and guarantees users experience complete buying cycles while ads are on.
+        * **Phase 2 (Cooldown):** Turn campaigns **OFF**, but continue to measure both Treatment and Control sales for an additional **{calc_cooldown} days**. This captures the decaying *adstock effect* (delayed purchases from people who interacted with an ad on the final days of Phase 1).
+        """)
+        
+        # Step 5: Export
+        st.header("Step 5: Export Test Design")
         csv = results_df.to_csv(index=False).encode('utf-8')
         st.download_button(label="📥 Download Paired Markets (CSV)", data=csv, file_name='geo_test_pairs.csv', mime='text/csv')
     else:
