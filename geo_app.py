@@ -22,27 +22,6 @@ def load_data(sales_file, zip_dma_file):
     df_map = pd.read_csv(zip_dma_file) if zip_dma_file.name.endswith('.csv') else pd.read_excel(zip_dma_file)
     return df_sales, df_map
 
-# Helper to calculate MDE purely for the optimization loop
-def calculate_cell_mde(t_dmas, c_dmas, cadence, periods, daily_pivot):
-    t_sum = daily_pivot[t_dmas].sum(axis=1)
-    c_sum = daily_pivot[c_dmas].sum(axis=1)
-    if cadence == 'Weekly':
-        t_sum = t_sum.resample('W-MON').sum()
-        c_sum = c_sum.resample('W-MON').sum()
-    elif cadence == 'Monthly':
-        t_sum = t_sum.resample('MS').sum()
-        c_sum = c_sum.resample('MS').sum()
-        
-    vol_scalar = t_sum.sum() / c_sum.sum() if c_sum.sum() > 0 else 1
-    c_scaled = c_sum * vol_scalar
-    diffs = t_sum - c_scaled
-    sd_diff = np.std(diffs)
-    se_total = sd_diff * np.sqrt(periods) 
-    mde_abs = 2.8 * se_total
-    baseline_t_vol = t_sum.mean() * periods
-    mde_pct = (mde_abs / baseline_t_vol) * 100 if baseline_t_vol > 0 else float('inf')
-    return mde_pct, mde_abs
-
 # ==========================================
 # MODE 1: PRE-TEST PLANNER
 # ==========================================
@@ -79,11 +58,11 @@ if app_mode == "1. Pre-Test Planner":
         
         if len(dma_totals) > 110: 
             valid_dmas = dma_totals.iloc[10:-100].index.tolist()
-            trim_msg = f"Started with {len(dma_totals)} DMAs. Removed Top 10 and Bottom 100. **{len(valid_dmas)} DMAs** remain for pairing."
+            trim_msg = f"Started with {len(dma_totals)} DMAs. Removed Top 10 and Bottom 100. **{len(valid_dmas)} DMAs** remain."
             trim_success = True
         else:
             valid_dmas = dma_totals.index.tolist()
-            trim_msg = f"Only found {len(dma_totals)} DMAs. Not enough to safely trim without losing data."
+            trim_msg = f"Only found {len(dma_totals)} DMAs. Not enough to safely trim."
             trim_success = False
             
         df_filtered = df[df[dma_col].isin(valid_dmas)]
@@ -108,7 +87,6 @@ if app_mode == "1. Pre-Test Planner":
                     paired.update([d1, d2])
             return pairs, paired
 
-        # Waterfall Passes
         daily_pairs, daily_paired_dmas = find_pairs(daily_pivot, min_corr)
         for p in daily_pairs: p['Matched_On'] = 'Daily'
         
@@ -143,12 +121,7 @@ if app_mode == "1. Pre-Test Planner":
                 df_sales_raw, df_map_raw, date_col, zip_col, sales_col, dma_col, dict_zip_col, min_corr
             )
             
-        st.header("Step 1: Outlier Trimming & Pairing Results")
-        if trim_success:
-            st.success(trim_msg)
-        else:
-            st.warning(trim_msg)
-
+        st.header("Step 1: The Matchmaker Waterfall")
         if not results_df.empty:
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Total Pairs Available", len(results_df))
@@ -156,173 +129,87 @@ if app_mode == "1. Pre-Test Planner":
             col3.metric("Weekly Pairs", len(results_df[results_df['Matched_On'] == 'Weekly']))
             col4.metric("Monthly Pairs", len(results_df[results_df['Matched_On'] == 'Monthly']))
             
-            with st.expander("🔍 View All Generated Pairs & Individual Visualizer"):
+            with st.expander("View All Generated Pairs (The Dating Pool)"):
                 st.dataframe(results_df, use_container_width=True)
-                
-                st.markdown("#### Inspect an Individual Pair")
-                pair_options = results_df.apply(lambda x: f"Pair {x['Pair_ID']}: {x['Treatment_DMA']} vs {x['Control_DMA']} ({x['Matched_On']}, r={x['Correlation']})", axis=1).tolist()
-                
-                if pair_options:
-                    selected_pair_str = st.selectbox("Select a pair to verify their historical trends move together:", pair_options)
-                    selected_idx = pair_options.index(selected_pair_str)
-                    t_dma = results_df.iloc[selected_idx]['Treatment_DMA']
-                    c_dma = results_df.iloc[selected_idx]['Control_DMA']
-                    matched_on = results_df.iloc[selected_idx]['Matched_On']
-                    
-                    chart_data_ind = daily_pivot[[t_dma, c_dma]]
-                    if matched_on == 'Weekly': chart_data_ind = chart_data_ind.resample('W-MON').sum()
-                    elif matched_on == 'Monthly': chart_data_ind = chart_data_ind.resample('MS').sum()
-                        
-                    fig_ind = px.line(chart_data_ind.reset_index(), x=date_col, y=[t_dma, c_dma], title=f"Historical Match ({matched_on})", labels={'value': 'Gross Sales', 'variable': 'Assignment'})
-                    st.plotly_chart(fig_ind, use_container_width=True)
-
-            st.header("Step 2: Multi-Cell Test Builder & Math Optimizer")
-            st.markdown("Build concurrent tests safely. **The script mathematically evaluates every combination of Cadences and Pair Counts to guarantee the lowest-risk scenario, automatically adapting based on how many cells you request.**")
             
-            num_cells = st.number_input("How many separate test cells are you running concurrently?", min_value=1, max_value=20, value=1)
+            st.header("Step 2: Multi-Cell Test Builder")
+            num_cells = st.number_input("How many separate test cells are you running?", min_value=1, max_value=5, value=1)
             
             assigned_pair_ids = [] 
             halflife_map = {
-                "High-Intent DR (Search, Shopping, Retargeting)": 3, 
-                "Feed-Based Social (Meta Image/Video, TikTok, Reels)": 7, 
+                "High-Intent DR (Search, Shopping)": 3, 
+                "Feed-Based Social (Meta, TikTok)": 7, 
                 "Immersive / Lean-Back (CTV, YouTube, TV, Audio)": 14
             }
-            lag_map = {"Low (<$50, Impulse)": 1, "Medium ($50-$200, Mild consideration)": 7, "High ($200+, Heavy research)": 14}
+            lag_map = {"Low (<$50, Impulse)": 1, "Medium ($50-$200)": 7, "High ($200+, Heavy research)": 14}
             
             for i in range(num_cells):
                 st.markdown(f"### 🧪 Test Cell {i+1}")
-                remaining_cells = num_cells - 1 - i
-                total_avail_all = len(results_df[~results_df['Pair_ID'].isin(assigned_pair_ids)])
-                
-                if total_avail_all <= remaining_cells and remaining_cells > 0:
-                    st.error("Not enough total pairs remaining to fulfill all test cells. Please reduce your cell count or reduce pairs assigned to previous cells.")
-                    break
-                elif total_avail_all == 0:
-                    st.error("No pairs left!")
-                    break
-                
-                # Row 1: Define the Campaign FIRST so we can calculate the test duration properly
                 c1, c2, c3, c4 = st.columns(4)
-                cell_name = c1.text_input(f"Campaign Name", f"Campaign {i+1}", key=f"name_{i}")
-                channel = c2.selectbox("Media Format & Attention Level", list(halflife_map.keys()), key=f"chan_{i}")
-                consideration = c3.selectbox("Product Price / Consideration", list(lag_map.keys()), key=f"cons_{i}")
+                cell_name = c1.text_input(f"Campaign/Cell Name", f"Campaign {i+1}", key=f"name_{i}")
+                cadence = c2.selectbox(f"Match Cadence", ["Daily", "Weekly", "Monthly"], key=f"cadence_{i}")
+                
+                available_df = results_df[(results_df['Matched_On'] == cadence) & (~results_df['Pair_ID'].isin(assigned_pair_ids))]
+                max_available = len(available_df)
+                
+                if max_available == 0:
+                    st.error(f"0 {cadence} pairs left! None available for this cell.")
+                    continue
+                    
+                num_pairs = c3.number_input(f"Pairs to Auto-Select (Max {max_available})", 1, max_available, min(5, max_available), key=f"num_{i}")
                 target_roas = c4.number_input("Target Break-Even ROAS", 0.1, 20.0, 2.0, step=0.1, key=f"roas_{i}")
                 
-                # Math Params based on Campaign selection
-                hl_days = halflife_map[channel]
-                lag_days = lag_map[consideration]
-                calc_test_days = max(28, int(np.ceil((lag_days * 2) / 7.0) * 7))
-                calc_cooldown = lag_days + (hl_days * 2)
-                
-                # --- OPTIMIZATION LOOP (Find lowest risk setup) ---
-                best_cadence = "Daily"
-                best_k = 1
-                lowest_mde = float('inf')
-                
-                available_cadences = []
-                
-                for cad in ["Daily", "Weekly", "Monthly"]:
-                    df_cad = results_df[(results_df['Matched_On'] == cad) & (~results_df['Pair_ID'].isin(assigned_pair_ids))]
-                    if len(df_cad) > 0:
-                        available_cadences.append(cad)
-                        
-                        max_k = min(len(df_cad), total_avail_all - remaining_cells) if remaining_cells > 0 else len(df_cad)
-                        
-                        if max_k >= 1:
-                            if cad == 'Weekly': periods = calc_test_days / 7.0
-                            elif cad == 'Monthly': periods = calc_test_days / 30.0
-                            else: periods = calc_test_days
-                            
-                            for k in range(1, max_k + 1):
-                                t_dmas_tmp = df_cad.head(k)['Treatment_DMA'].tolist()
-                                c_dmas_tmp = df_cad.head(k)['Control_DMA'].tolist()
-                                mde_pct_tmp, _ = calculate_cell_mde(t_dmas_tmp, c_dmas_tmp, cad, periods, daily_pivot)
-                                
-                                if mde_pct_tmp < lowest_mde:
-                                    lowest_mde = mde_pct_tmp
-                                    best_cadence = cad
-                                    best_k = k
-
-                # Row 2: Auto-Allocated Cadence and Pairs
-                st.markdown("#### 🎯 Footprint Auto-Allocator")
-                r2c1, r2c2 = st.columns(2)
-                
-                if not available_cadences:
-                    st.error("No valid cadences left.")
-                    break
-                    
-                cadence_idx = available_cadences.index(best_cadence) if best_cadence in available_cadences else 0
-                selected_cadence = r2c1.selectbox(f"Match Cadence", available_cadences, index=cadence_idx, key=f"cadence_{i}")
-                
-                # Recalculate if user manually overrides the optimized cadence
-                df_selected_cad = results_df[(results_df['Matched_On'] == selected_cadence) & (~results_df['Pair_ID'].isin(assigned_pair_ids))]
-                max_k_selected = min(len(df_selected_cad), total_avail_all - remaining_cells) if remaining_cells > 0 else len(df_selected_cad)
-                max_k_selected = max(1, max_k_selected)
-                
-                if selected_cadence == best_cadence:
-                    default_k = best_k
-                else:
-                    default_k = 1
-                    lowest_mde_manual = float('inf')
-                    if selected_cadence == 'Weekly': periods_sel = calc_test_days / 7.0
-                    elif selected_cadence == 'Monthly': periods_sel = calc_test_days / 30.0
-                    else: periods_sel = calc_test_days
-                    
-                    for k in range(1, max_k_selected + 1):
-                        t_dmas_tmp = df_selected_cad.head(k)['Treatment_DMA'].tolist()
-                        c_dmas_tmp = df_selected_cad.head(k)['Control_DMA'].tolist()
-                        mde_pct_tmp, _ = calculate_cell_mde(t_dmas_tmp, c_dmas_tmp, selected_cadence, periods_sel, daily_pivot)
-                        if mde_pct_tmp < lowest_mde_manual:
-                            lowest_mde_manual = mde_pct_tmp
-                            default_k = k
-                            
-                num_pairs = r2c2.number_input(f"Pairs (Max {max_k_selected})", min_value=1, max_value=max_k_selected, value=default_k, key=f"num_{i}")
-                
-                if selected_cadence == best_cadence and num_pairs == best_k:
-                    st.success(f"✨ **Mathematically Optimized Default:** Evaluated every combination and automatically selected **{selected_cadence} Cadence** with **{num_pairs} Pairs** to achieve the absolute lowest risk scenario (**{lowest_mde:.1f}% Lift Required**).")
-                else:
-                    st.info(f"🔧 **Manual Override Active:** You shifted away from the lowest-risk mathematical default. Watch the Diminishing Returns check below!")
-
-                # Lock them in for SUTVA
-                cell_df = df_selected_cad.head(num_pairs)
+                cell_df = available_df.head(num_pairs)
                 assigned_pair_ids.extend(cell_df['Pair_ID'].tolist())
                 
-                # Final Stats for the Expander
-                if selected_cadence == 'Weekly': periods_final = calc_test_days / 7.0
-                elif selected_cadence == 'Monthly': periods_final = calc_test_days / 30.0
-                else: periods_final = calc_test_days
+                ac1, ac2 = st.columns(2)
+                channel = ac1.selectbox("Media Format & Attention Level", list(halflife_map.keys()), key=f"chan_{i}")
+                consideration = ac2.selectbox("Product Price / Consideration", list(lag_map.keys()), key=f"cons_{i}")
                 
-                mde_pct_final, mde_abs_final = calculate_cell_mde(cell_df['Treatment_DMA'].tolist(), cell_df['Control_DMA'].tolist(), selected_cadence, periods_final, daily_pivot)
-                recommended_budget = mde_abs_final / target_roas if target_roas > 0 else 0
+                hl_days = halflife_map[channel]
+                lag_days = lag_map[consideration]
                 
-                with st.expander(f"📊 View Economics & Export for: {cell_name} ({num_pairs} Pairs)", expanded=True):
+                calc_cooldown = lag_days + (hl_days * 2)
+                calc_test_days = max(28, int(np.ceil((lag_days * 2) / 7.0) * 7))
+                
+                t_dmas = cell_df['Treatment_DMA'].tolist()
+                c_dmas = cell_df['Control_DMA'].tolist()
+                
+                t_sum = daily_pivot[t_dmas].sum(axis=1)
+                c_sum = daily_pivot[c_dmas].sum(axis=1)
+                
+                if cadence == 'Weekly':
+                    t_sum = t_sum.resample('W-MON').sum()
+                    c_sum = c_sum.resample('W-MON').sum()
+                    periods = calc_test_days / 7.0
+                elif cadence == 'Monthly':
+                    t_sum = t_sum.resample('MS').sum()
+                    c_sum = c_sum.resample('MS').sum()
+                    periods = calc_test_days / 30.0
+                else:
+                    periods = calc_test_days
+                    
+                volume_scalar = t_sum.sum() / c_sum.sum() if c_sum.sum() > 0 else 1
+                c_scaled = c_sum * volume_scalar
+                
+                diffs = t_sum - c_scaled
+                sd_diff = np.std(diffs)
+                
+                se_total = sd_diff * np.sqrt(periods) 
+                mde_absolute = 2.8 * se_total
+                
+                baseline_t_vol = t_sum.mean() * periods
+                mde_pct = (mde_absolute / baseline_t_vol) * 100 if baseline_t_vol > 0 else 0
+                recommended_budget = mde_absolute / target_roas if target_roas > 0 else 0
+                
+                with st.expander(f"📊 View Economics & Export for: {cell_name}", expanded=True):
                     bc1, bc2, bc3, bc4 = st.columns(4)
                     bc1.metric("Active Run Time", f"{calc_test_days} Days")
                     bc2.metric("Adstock Cooldown", f"{calc_cooldown} Days")
-                    bc3.metric("Incremental Sales Needed", f"${mde_abs_final:,.0f} ({mde_pct_final:.1f}% Lift)")
+                    bc3.metric("Incremental Sales Needed", f"${mde_absolute:,.0f} ({mde_pct:.1f}% Lift)")
                     bc4.metric("Required Total Budget", f"${recommended_budget:,.0f}")
                     
-                    st.markdown("### Diminishing Returns Reality Check")
-                    if mde_pct_final <= 10:
-                        st.success(f"✅ **Highly Feasible (Requires {mde_pct_final:.1f}% Lift):** Safe to execute for these {num_pairs} pairs. Low risk of ad saturation.")
-                    elif mde_pct_final <= 20:
-                        st.warning(f"⚠️ **Moderate Risk (Requires {mde_pct_final:.1f}% Lift):** You need a sizable lift. Ensure strong creative and manage frequency caps.")
-                    else:
-                        st.error(f"🚨 **High Risk of Saturation (Requires {mde_pct_final:.1f}% Lift):** The historical noise is too high compared to the volume of the markets you selected. Trying to force this lift will likely cause ad fatigue before you hit statistical significance.")
-                    
-                    t_sum_f = daily_pivot[cell_df['Treatment_DMA'].tolist()].sum(axis=1)
-                    c_sum_f = daily_pivot[cell_df['Control_DMA'].tolist()].sum(axis=1)
-                    if selected_cadence == 'Weekly':
-                        t_sum_f = t_sum_f.resample('W-MON').sum()
-                        c_sum_f = c_sum_f.resample('W-MON').sum()
-                    elif selected_cadence == 'Monthly':
-                        t_sum_f = t_sum_f.resample('MS').sum()
-                        c_sum_f = c_sum_f.resample('MS').sum()
-                    
-                    vol_scalar_f = t_sum_f.sum() / c_sum_f.sum() if c_sum_f.sum() > 0 else 1
-                    c_scaled_f = c_sum_f * vol_scalar_f
-                    
-                    chart_data = pd.DataFrame({'Treatment': t_sum_f, 'Control (Scaled)': c_scaled_f}).reset_index()
+                    chart_data = pd.DataFrame({'Treatment': t_sum, 'Control (Scaled)': c_scaled}).reset_index()
                     fig = px.line(chart_data, x=date_col, y=['Treatment', 'Control (Scaled)'], title=f"Historical Baseline: {cell_name}", labels={'value':'Gross Sales', 'variable':'Group'})
                     st.plotly_chart(fig, use_container_width=True)
                     
@@ -376,17 +263,19 @@ elif app_mode == "2. Post-Test Measurement":
             
             t_dmas = test_map['Treatment_DMA'].tolist()
             c_dmas = test_map['Control_DMA'].tolist()
-            cadence = test_map['Matched_On'].iloc[0] 
+            cadence = test_map['Matched_On'].iloc[0] # Auto-detect how these pairs were matched!
             
             df_test = df[df[dma_col2].isin(t_dmas + c_dmas)]
             daily_pivot = df_test.pivot_table(index=date_col2, columns=dma_col2, values=sales_col2, aggfunc='sum').fillna(0)
             
+            # Ensure missing DMAs are padded with 0s
             for d in (t_dmas + c_dmas):
                 if d not in daily_pivot.columns: daily_pivot[d] = 0
             
             daily_pivot['Treatment_Actual'] = daily_pivot[t_dmas].sum(axis=1)
             daily_pivot['Control_Actual'] = daily_pivot[c_dmas].sum(axis=1)
             
+            # Cadence Adjustment for Measurement
             if cadence == 'Weekly':
                 model_data = daily_pivot[['Treatment_Actual', 'Control_Actual']].resample('W-MON').sum()
             elif cadence == 'Monthly':
@@ -405,16 +294,20 @@ elif app_mode == "2. Post-Test Measurement":
             elif len(post_data) == 0:
                 st.error("🚨 No data found for the Test Period. Check your start/end dates.")
             else:
+                # --- SYNTHETIC CONTROL MODEL (Linear Regression) ---
                 X_pre = pre_data['Control_Actual'].values
                 Y_pre = pre_data['Treatment_Actual'].values
                 
+                # Fit 1D polynomial (y = mx + b)
                 slope, intercept = np.polyfit(X_pre, Y_pre, 1)
                 
+                # Predict Counterfactual for the ENTIRE timeline
                 model_data['Counterfactual (Predicted)'] = (model_data['Control_Actual'] * slope) + intercept
                 model_data['Counterfactual (Predicted)'] = model_data['Counterfactual (Predicted)'].clip(lower=0) 
                 
                 model_data['Incremental_Lift'] = model_data['Treatment_Actual'] - model_data['Counterfactual (Predicted)']
                 
+                # --- STATISTICAL MEASUREMENT (Post-Period Only) ---
                 post_model = model_data[(model_data.index >= start_dt) & (model_data.index <= end_dt)]
                 
                 total_treatment = post_model['Treatment_Actual'].sum()
@@ -422,6 +315,7 @@ elif app_mode == "2. Post-Test Measurement":
                 incremental_revenue = total_treatment - total_counterfactual
                 roas = incremental_revenue / actual_spend if actual_spend > 0 else 0
                 
+                # 95% Confidence Interval & Standard Error based on pre-period variance
                 pre_residuals = pre_data['Treatment_Actual'] - ((pre_data['Control_Actual'] * slope) + intercept)
                 sigma = np.std(pre_residuals)
                 se_total = sigma * np.sqrt(len(post_model))
@@ -430,6 +324,7 @@ elif app_mode == "2. Post-Test Measurement":
                 ci_upper = incremental_revenue + (1.96 * se_total)
                 stat_sig = ci_lower > 0
                 
+                # --- UI RESULTS ---
                 st.header("Step 1: Test Results & Significance")
                 if stat_sig:
                     st.success("✅ **STATISTICALLY SIGNIFICANT:** The campaign successfully pierced the market noise and drove proven incremental revenue! (The 95% Confidence Interval is entirely above $0).")
@@ -444,15 +339,21 @@ elif app_mode == "2. Post-Test Measurement":
                 m3.metric("95% Confidence Interval", f"${ci_lower:,.0f} to ${ci_upper:,.0f}")
                 m4.metric("% Lift over Baseline", f"{(incremental_revenue / total_counterfactual)*100:.1f}%" if total_counterfactual > 0 else "N/A")
                 
+                # --- VISUALIZATIONS ---
                 st.header("Step 2: Causal Impact Visualization")
                 
+                # Chart 1: Time Series (Actual vs Counterfactual)
                 fig1 = go.Figure()
                 fig1.add_trace(go.Scatter(x=model_data.index, y=model_data['Treatment_Actual'], mode='lines', name='Actual Treatment Sales', line=dict(color='#00b4d8', width=3)))
                 fig1.add_trace(go.Scatter(x=model_data.index, y=model_data['Counterfactual (Predicted)'], mode='lines', name='Counterfactual (No Ads)', line=dict(color='#ff9f1c', width=3, dash='dash')))
+                
+                # Add shaded test window
                 fig1.add_vrect(x0=start_dt, x1=end_dt, fillcolor="green", opacity=0.1, line_width=0, annotation_text="Active Test & Cooldown Period", annotation_position="top left")
+                
                 fig1.update_layout(title=f"Sales Impact: Actual vs. Predicted ({cadence} Level)", yaxis_title="Gross Sales ($)", hovermode="x unified")
                 st.plotly_chart(fig1, use_container_width=True)
                 
+                # Chart 2: Cumulative Lift 
                 st.markdown("### Cumulative Incremental Lift")
                 st.markdown("This shows the incremental dollars piling up over time during the test. The green shaded area represents the 95% Confidence Interval. If the lower boundary of the green area stays above the red zero-line by the end of the test, it's a statistically significant win!")
                 
