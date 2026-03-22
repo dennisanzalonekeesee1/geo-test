@@ -134,21 +134,27 @@ if sales_file and zip_dma_file:
         
         num_cells = st.number_input("How many separate test cells are you running?", min_value=1, max_value=5, value=1)
         
-        assigned_pair_ids = [] # Tracks SUTVA lockouts!
+        assigned_pair_ids = [] 
         
-        # Industry heuristics mappings
-        halflife_map = {"Search / Bottom Funnel": 3, "Social / Mid Funnel": 7, "Video / CTV / Audio": 14}
-        lag_map = {"Low (<$50)": 1, "Medium ($50-$200)": 7, "High ($200+)": 14}
+        # 🎯 PRECISE INDUSTRY HEURISTICS FOR ADSTOCK & LAG
+        halflife_map = {
+            "High-Intent DR (Search, Shopping, Retargeting)": 3, 
+            "Feed-Based Social (Meta Image/Video, TikTok, Reels)": 7, 
+            "Immersive / Lean-Back (CTV, YouTube, TV, Audio)": 14
+        }
+        lag_map = {
+            "Low (<$50, Impulse)": 1, 
+            "Medium ($50-$200, Mild consideration)": 7, 
+            "High ($200+, Heavy research)": 14
+        }
         
         for i in range(num_cells):
             st.markdown(f"### 🧪 Test Cell {i+1}")
             
-            # Row 1: Cell Definition
             c1, c2, c3, c4 = st.columns(4)
             cell_name = c1.text_input(f"Campaign/Cell Name", f"Campaign {i+1}", key=f"name_{i}")
             cadence = c2.selectbox(f"Match Cadence", ["Daily", "Weekly", "Monthly"], key=f"cadence_{i}", help="Strictly isolates pairs by how they matched to protect statistical variance.")
             
-            # Filter available pairs based on Cadence AND SUTVA lockouts
             available_df = results_df[(results_df['Matched_On'] == cadence) & (~results_df['Pair_ID'].isin(assigned_pair_ids))]
             max_available = len(available_df)
             
@@ -159,20 +165,17 @@ if sales_file and zip_dma_file:
             num_pairs = c3.number_input(f"Pairs to Auto-Select (Max {max_available})", 1, max_available, min(5, max_available), key=f"num_{i}")
             target_roas = c4.number_input("Target Break-Even ROAS", 0.1, 20.0, 2.0, step=0.1, key=f"roas_{i}")
             
-            # Auto-Allocate the top highest-correlated pairs available
             cell_df = available_df.head(num_pairs)
             assigned_pair_ids.extend(cell_df['Pair_ID'].tolist())
             
-            # Row 2: Adstock Economics
             ac1, ac2 = st.columns(2)
-            channel = ac1.selectbox("Media Channel", list(halflife_map.keys()), key=f"chan_{i}")
-            consideration = ac2.selectbox("Product Consideration", list(lag_map.keys()), key=f"cons_{i}")
+            channel = ac1.selectbox("Media Format & Attention Level", list(halflife_map.keys()), key=f"chan_{i}", help="Determines the memory retention (Adstock Decay) of your ads.")
+            consideration = ac2.selectbox("Product Price / Consideration", list(lag_map.keys()), key=f"cons_{i}")
             
             # --- DYNAMIC POWER ANALYSIS ---
             hl_days = halflife_map[channel]
             lag_days = lag_map[consideration]
             
-            # Cooldown = Product consideration lag + 2x the channel half-life (captures ~75% of memory decay)
             calc_cooldown = lag_days + (hl_days * 2)
             calc_test_days = max(28, int(np.ceil((lag_days * 2) / 7.0) * 7))
             
@@ -182,7 +185,6 @@ if sales_file and zip_dma_file:
             t_sum = daily_pivot[t_dmas].sum(axis=1)
             c_sum = daily_pivot[c_dmas].sum(axis=1)
             
-            # Crucial Heteroskedasticity Fix: Resample time-series BEFORE calculating noise variance based on cadence!
             if cadence == 'Weekly':
                 t_sum = t_sum.resample('W-MON').sum()
                 c_sum = c_sum.resample('W-MON').sum()
@@ -200,14 +202,13 @@ if sales_file and zip_dma_file:
             diffs = t_sum - c_scaled
             sd_diff = np.std(diffs)
             
-            se_total = sd_diff * np.sqrt(periods) # Power accounts for the proper timeframe!
+            se_total = sd_diff * np.sqrt(periods) 
             mde_absolute = 2.8 * se_total
             
             baseline_t_vol = t_sum.mean() * periods
             mde_pct = (mde_absolute / baseline_t_vol) * 100 if baseline_t_vol > 0 else 0
             recommended_budget = mde_absolute / target_roas if target_roas > 0 else 0
             
-            # Output Results inside an expander to keep UI clean
             with st.expander(f"📊 View Economics & Export for: {cell_name} ({num_pairs} Pairs)", expanded=True):
                 bc1, bc2, bc3, bc4 = st.columns(4)
                 bc1.metric("Active Run Time", f"{calc_test_days} Days")
@@ -222,14 +223,12 @@ if sales_file and zip_dma_file:
                 else:
                     st.error("🚨 **High Risk of Saturation:** This cell requires a massive lift to beat the noise. Allocate MORE pairs to this cell to lower the variance!")
                 
-                # Dynamic Visualizer
                 chart_data = pd.DataFrame({'Treatment': t_sum, 'Control (Scaled)': c_scaled}).reset_index()
                 fig = px.line(chart_data, x=date_col, y=['Treatment', 'Control (Scaled)'], 
                               title=f"Historical Baseline ({cadence}): {cell_name}",
                               labels={'value': 'Gross Sales', 'variable': 'Group'})
                 st.plotly_chart(fig, use_container_width=True)
                 
-                # Cell-Specific Export!
                 csv = cell_df.to_csv(index=False).encode('utf-8')
                 st.download_button(label=f"📥 Download Activation Map: {cell_name}", data=csv, file_name=f'test_cell_{i+1}_{cell_name.replace(" ", "_")}.csv', mime='text/csv')
                 
