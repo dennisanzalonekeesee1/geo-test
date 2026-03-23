@@ -302,8 +302,8 @@ if app_mode == "1. Pre-Test Planner":
             assigned_pair_ids = []
             cell_assignments = {i: pd.DataFrame() for i in range(num_cells)}
             
-            # Use the optimized correlation floor if auto-optimize is on, otherwise use the sidebar default
-            active_results_df = results_df[results_df['Correlation'] >= best_corr] if auto_optimize else results_df
+            # Use the optimized correlation floor from the MASTER list if auto-optimize is on
+            active_results_df = master_results_df[master_results_df['Correlation'] >= best_corr] if auto_optimize else results_df
             
             for current_cadence in ["Daily", "Weekly", "Monthly"]:
                 competing_cells = [c for c in cell_configs if c['cadence'] == current_cadence]
