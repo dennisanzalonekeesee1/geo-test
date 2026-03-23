@@ -241,7 +241,7 @@ if app_mode == "1. Pre-Test Planner":
                     st.markdown("### Diminishing Returns Risk")
                     if mde_pct <= 10:
                         st.success(f"✅ **Highly Feasible (Requires {mde_pct:.1f}% Lift):** Safe to execute for these {len(alloc)} pairs. Low risk of ad saturation.")
-                        elif mde_pct <= 20:
+                        if mde_pct <= 20:
                         st.warning(f"⚠️ **Moderate Risk (Requires {mde_pct:.1f}% Lift):** You need a sizable lift. Ensure strong creative and manage frequency caps.")
                         else:
                         st.error(f"🚨 **High Risk of Saturation (Requires {mde_pct:.1f}% Lift):** The historical noise is too high. Trying to force this lift will likely cause ad fatigue before you hit statistical significance.")
