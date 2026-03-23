@@ -40,6 +40,7 @@ st.markdown("Market Matching, Multi-Cell Planning, Post-Test Causal Measurement.
 # --- SIDEBAR: NAVIGATION & UPLOADS ---
 with st.sidebar:
     app_mode = st.radio("🔄 Select App Mode", ["1. Pre-Test Planner", "2. Post-Test Measurement"])
+    test_direction = st.radio("Test Direction", ["Scale-Up (Ads ON)", "Holdout (Ads OFF)"])
     st.divider()
 
 # --- CACHED DATA PROCESSING (Shared by both modes) ---
@@ -234,7 +235,8 @@ if app_mode == "1. Pre-Test Planner":
                     bc1.metric("Active Run Time", f"{calc_test_days} Days")
                     bc2.metric("Adstock Cooldown", f"{calc_cooldown} Days")
                     bc3.metric("Incremental Sales Needed", f"${mde_absolute:,.0f} ({mde_pct:.1f}% Lift)")
-                    bc4.metric("Required Total Budget", f"${recommended_budget:,.0f}")
+                    budget_label = "Required Total Budget" if test_direction == "Scale-Up (Ads ON)" else "Spend to Withhold"
+                        bc4.metric(budget_label, f"${recommended_budget:,.0f}")
                     
                     chart_data = pd.DataFrame({'Treatment': t_sum, 'Control (Scaled)': c_scaled}).reset_index()
                     fig = px.line(chart_data, x=date_col, y=['Treatment', 'Control (Scaled)'], title=f"Historical Baseline: {cell_name}", labels={'value':'Gross Sales', 'variable':'Group'})
@@ -262,7 +264,8 @@ elif app_mode == "2. Post-Test Measurement":
         st.header("2. Campaign Details")
         start_date = st.date_input("Test Start Date (Ads turned ON)")
         end_date = st.date_input("Measurement End Date (End of Cooldown)")
-        actual_spend = st.number_input("Actual Media Spend ($)", min_value=1.0, value=10000.0, step=500.0)
+        spend_label = "Actual Media Spend ($)" if test_direction == "Scale-Up (Ads ON)" else "Withheld Media Spend ($)"
+        actual_spend = st.number_input(spend_label, min_value=1.0, value=10000.0, step=500.0)
         
         st.markdown("### Verify Column Names")
         date_col2 = st.text_input("Date Column (Sales)", "Day", key="d2")
@@ -349,20 +352,36 @@ elif app_mode == "2. Post-Test Measurement":
                 
                 ci_lower = incremental_revenue - (1.96 * se_total)
                 ci_upper = incremental_revenue + (1.96 * se_total)
-                stat_sig = ci_lower > 0
                 
-                # --- UI RESULTS ---
+                # --- DYNAMIC HOLDOUT LOGIC ---
+                if test_direction == "Scale-Up (Ads ON)":
+                    stat_sig = ci_lower > 0
+                    is_success = incremental_revenue > 0
+                    display_revenue = incremental_revenue
+                    display_roas = roas
+                    success_msg = "✅ **STATISTICALLY SIGNIFICANT WIN:** The ads drove proven incremental revenue! (Confidence Interval is entirely above $0)."
+                    warn_msg = "⚠️ **NOT SIGNIFICANT / INCONCLUSIVE:** The lift was positive but indistinguishable from natural market variance (noise). The confidence interval includes zero."
+                    fail_msg = "🚨 **NEGATIVE OR ZERO LIFT:** The Treatment markets underperformed compared to the mathematical baseline. The ads did not work."
+                else: # Holdout (Ads OFF)
+                    stat_sig = ci_upper < 0
+                    is_success = incremental_revenue < 0 # A drop in sales is a success!
+                    display_revenue = abs(incremental_revenue) # Show absolute dollars protected
+                    display_roas = abs(incremental_revenue) / actual_spend if actual_spend > 0 else 0
+                    success_msg = "✅ **STATISTICALLY SIGNIFICANT HOLDOUT:** Turning ads OFF caused a proven drop in sales! Your baseline spend is highly incremental. (CI is entirely below $0)."
+                    warn_msg = "⚠️ **INCONCLUSIVE:** The sales dropped, but it was indistinguishable from natural market variance. The confidence interval includes zero."
+                    fail_msg = "🚨 **NO DROP DETECTED:** Turning ads OFF did not cause a meaningful drop in sales. Your baseline spend is likely taking credit for organic sales."
+
                 st.header("Step 1: Test Results & Significance")
                 if stat_sig:
-                    st.success("✅ **STATISTICALLY SIGNIFICANT:** The campaign successfully pierced the market noise and drove proven incremental revenue! (The 95% Confidence Interval is entirely above $0).")
-                elif incremental_revenue > 0:
-                    st.warning("⚠️ **NOT SIGNIFICANT / INCONCLUSIVE:** The incremental lift was positive but indistinguishable from natural market variance (noise). The confidence interval includes zero.")
+                    st.success(success_msg)
+                elif is_success:
+                    st.warning(warn_msg)
                 else:
-                    st.error("🚨 **NEGATIVE OR ZERO LIFT:** The Treatment markets underperformed compared to the mathematical baseline. The ads did not work.")
+                    st.error(fail_msg)
 
                 m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Total Incremental Revenue", f"${incremental_revenue:,.0f}")
-                m2.metric("Realized ROAS", f"{roas:.2f}x")
+                m1.metric("Total Incremental Impact", f"${display_revenue:,.0f}")
+                m2.metric("True ROAS", f"{display_roas:.2f}x")
                 m3.metric("95% Confidence Interval", f"${ci_lower:,.0f} to ${ci_upper:,.0f}")
                 m4.metric("% Lift over Baseline", f"{(incremental_revenue / total_counterfactual)*100:.1f}%" if total_counterfactual > 0 else "N/A")
                 
