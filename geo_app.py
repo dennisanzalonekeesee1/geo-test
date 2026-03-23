@@ -149,11 +149,16 @@ if app_mode == "1. Pre-Test Planner":
     if sales_file and zip_dma_file:
         with st.spinner("Processing data through waterfall..."):
             df_sales_raw, df_map_raw = load_data(sales_file, zip_dma_file)
-            results_df, daily_pivot, trim_msg, trim_success = process_pre_test(
-                df_sales_raw, df_map_raw, date_col, zip_col, sales_col, dma_col, dict_zip_col, min_corr
+            
+            # ALWAYS process the master pool at the absolute minimum (0.70) so the optimizer has all the data
+            master_results_df, daily_pivot, trim_msg, trim_success = process_pre_test(
+                df_sales_raw, df_map_raw, date_col, zip_col, sales_col, dma_col, dict_zip_col, 0.70
             )
             
         st.header("Step 1: The Matchmaker Waterfall")
+        # Filter the visual display to match the user's manual sidebar setting
+        results_df = master_results_df[master_results_df['Correlation'] >= min_corr]
+        
         if not results_df.empty:
             col1, col2, col3, col4 = st.columns(4)
             col1.metric("Total Pairs Available", len(results_df))
@@ -214,13 +219,12 @@ if app_mode == "1. Pre-Test Planner":
                     best_pairs = 1
                     best_corr = min_corr # Defaults to your sidebar setting
                     
-                    # 1. Search Grid: Test correlations from your sidebar minimum up to 0.98
-                    test_corrs = [round(c, 2) for c in np.arange(min_corr, 0.99, 0.02)]
-                    if min_corr not in test_corrs: test_corrs.insert(0, min_corr)
+                    # 1. Search Grid: Test correlations from the absolute floor (0.70) up to 0.98
+                    test_corrs = [round(c, 2) for c in np.arange(0.70, 0.99, 0.02)]
                     
                     for test_corr in test_corrs:
-                        # Dynamically shrink the dating pool to only high-quality matches
-                        corr_filtered_df = results_df[results_df['Correlation'] >= test_corr]
+                        # Dynamically shrink the dating pool using the MASTER list, ignoring the sidebar
+                        corr_filtered_df = master_results_df[master_results_df['Correlation'] >= test_corr]
                         
                         for test_cadence in ["Daily", "Weekly", "Monthly"]:
                             available_df = corr_filtered_df[corr_filtered_df['Matched_On'] == test_cadence]
