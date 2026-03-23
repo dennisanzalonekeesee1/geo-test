@@ -220,17 +220,17 @@ def optimize_test_setup(results_df, daily_pivot, calc_test_days, target_roas):
             }
     lag_map = {"Low (<$50, Impulse)": 1, "Medium ($50-$200)": 7, "High ($200+, Heavy research)": 14}
             
-            for i in range(num_cells):
-                st.markdown(f"### 🧪 Test Cell {i+1}")
-                c1, c2, c3, c4 = st.columns(4)
-                cell_name = c1.text_input(f"Campaign/Cell Name", f"Campaign {i+1}", key=f"name_{i}")
-                cadence = c2.selectbox(f"Match Cadence", ["Daily", "Weekly", "Monthly"], key=f"cadence_{i}")
+    for i in range(num_cells):
+    st.markdown(f"### 🧪 Test Cell {i+1}")
+    c1, c2, c3, c4 = st.columns(4)
+    cell_name = c1.text_input(f"Campaign/Cell Name", f"Campaign {i+1}", key=f"name_{i}")
+    cadence = c2.selectbox(f"Match Cadence", ["Daily", "Weekly", "Monthly"], key=f"cadence_{i}")
                 
-                available_df = results_df[(results_df['Matched_On'] == cadence) & (~results_df['Pair_ID'].isin(assigned_pair_ids))]
-                max_available = len(available_df)
+    available_df = results_df[(results_df['Matched_On'] == cadence) & (~results_df['Pair_ID'].isin(assigned_pair_ids))]
+    max_available = len(available_df)
                 
-                if max_available == 0:
-                    st.error(f"0 {cadence} pairs left! None available for this cell.")
+    if max_available == 0:
+                st.error(f"0 {cadence} pairs left! None available for this cell.")
                     continue
                     
                 num_pairs = c3.number_input(f"Pairs to Auto-Select (Max {max_available})", 1, max_available, min(5, max_available), key=f"num_{i}")
