@@ -28,9 +28,9 @@ def check_auth():
 if not check_auth():
     st.stop()
 
-# --- EVERYTHING BELOW THIS LINE IS THE PROTECTED CODE ---
+# --- EVERYTHING BELOW THIS LINE IS YOUR PROTECTED CODE ---
 st.success("Access Granted.")
-# Actual work starts here...
+# Your actual work starts here...
 
 st.set_page_config(page_title="Geo-Test App", layout="wide")
 
@@ -159,141 +159,84 @@ if app_mode == "1. Pre-Test Planner":
             
             with st.expander("View All Generated Pairs (The Dating Pool)"):
                 st.dataframe(results_df, use_container_width=True)
-
-def optimize_test_setup(results_df, daily_pivot, calc_test_days, target_roas):
-    optimization_results = []
-    
-    # Test every cadence and every possible number of pairs (up to 15 or max available)
-    for cadence in ["Daily", "Weekly", "Monthly"]:
-        cadence_df = results_df[results_df['Matched_On'] == cadence]
-        max_p = min(len(cadence_df), 15)
-        
-        if max_p == 0: continue
             
-        for n in range(1, max_p + 1):
-            # Selection
-            test_pairs = cadence_df.head(n)
-            t_dmas = test_pairs['Treatment_DMA'].tolist()
-            c_dmas = test_pairs['Control_DMA'].tolist()
+            st.header("Step 2: Multi-Cell Test Builder")
+            num_cells = st.number_input("How many separate test cells are you running?", min_value=1, max_value=5, value=1)
             
-            # Data Prep
-            t_sum = daily_pivot[t_dmas].sum(axis=1)
-            c_sum = daily_pivot[c_dmas].sum(axis=1)
-            
-            if cadence == 'Weekly':
-                t_sum, c_sum = t_sum.resample('W-MON').sum(), c_sum.resample('W-MON').sum()
-                periods = calc_test_days / 7.0
-            elif cadence == 'Monthly':
-                t_sum, c_sum = t_sum.resample('MS').sum(), c_sum.resample('MS').sum()
-                periods = calc_test_days / 30.0
-            else:
-                periods = calc_test_days
-
-            # Math logic (Simplified MDE)
-            scalar = t_sum.sum() / c_sum.sum() if c_sum.sum() > 0 else 1
-            diffs = t_sum - (c_sum * scalar)
-            sd_diff = np.std(diffs)
-            mde_abs = 2.8 * (sd_diff * np.sqrt(periods))
-            baseline_vol = t_sum.mean() * periods
-            mde_pct = (mde_abs / baseline_vol) * 100 if baseline_vol > 0 else 999
-            
-            optimization_results.append({
-                'Cadence': cadence,
-                'Pairs': n,
-                'Lift_Pct': mde_pct,
-                'Budget': mde_abs / target_roas
-            })
-
-    opt_df = pd.DataFrame(optimization_results)
-    if not opt_df.empty:
-        return opt_df.sort_values("Lift_Pct").iloc[0] # Return the one with lowest Lift %
-    return None
-            
-    st.header("Step 2: Multi-Cell Test Builder")
-    num_cells = st.number_input("How many separate test cells are you running?", min_value=1, max_value=5, value=1)
-            
-    assigned_pair_ids = [] 
-    halflife_map = {
+            assigned_pair_ids = [] 
+            halflife_map = {
                 "High-Intent DR (Search, Shopping)": 3, 
                 "Feed-Based Social (Meta, TikTok)": 7, 
                 "Immersive / Lean-Back (CTV, YouTube, TV, Audio)": 14
             }
-    lag_map = {"Low (<$50, Impulse)": 1, "Medium ($50-$200)": 7, "High ($200+, Heavy research)": 14}
+            lag_map = {"Low (<$50, Impulse)": 1, "Medium ($50-$200)": 7, "High ($200+, Heavy research)": 14}
             
-    for i in range(num_cells):
-               st.markdown(f"### 🧪 Test Cell {i+1}")
-               c1, c2, c3, c4 = st.columns(4)
-               cell_name = c1.text_input(f"Campaign/Cell Name", f"Campaign {i+1}", key=f"name_{i}")
-               cadence = c2.selectbox(f"Match Cadence", ["Daily", "Weekly", "Monthly"], key=f"cadence_{i}")
+            for i in range(num_cells):
+                st.markdown(f"### 🧪 Test Cell {i+1}")
+                c1, c2, c3, c4 = st.columns(4)
+                cell_name = c1.text_input(f"Campaign/Cell Name", f"Campaign {i+1}", key=f"name_{i}")
+                cadence = c2.selectbox(f"Match Cadence", ["Daily", "Weekly", "Monthly"], key=f"cadence_{i}")
                 
-               available_df = results_df[(results_df['Matched_On'] == cadence) & (~results_df['Pair_ID'].isin(assigned_pair_ids))]
-               max_available = len(available_df)
+                available_df = results_df[(results_df['Matched_On'] == cadence) & (~results_df['Pair_ID'].isin(assigned_pair_ids))]
+                max_available = len(available_df)
                 
-               if max_available == 0:
-                st.error(f"0 {cadence} pairs left! None available for this cell.")
-               continue
+                if max_available == 0:
+                    st.error(f"0 {cadence} pairs left! None available for this cell.")
+                    continue
                     
-               num_pairs = c3.number_input(f"Pairs to Auto-Select (Max {max_available})", 1, max_available, min(5, max_available), key=f"num_{i}")
-               target_roas = c4.number_input("Target Break-Even ROAS", 0.1, 20.0, 2.0, step=0.1, key=f"roas_{i}")
+                num_pairs = c3.number_input(f"Pairs to Auto-Select (Max {max_available})", 1, max_available, min(5, max_available), key=f"num_{i}")
+                target_roas = c4.number_input("Target Break-Even ROAS", 0.1, 20.0, 2.0, step=0.1, key=f"roas_{i}")
                 
-               cell_df = available_df.head(num_pairs)
-               assigned_pair_ids.extend(cell_df['Pair_ID'].tolist())
+                cell_df = available_df.head(num_pairs)
+                assigned_pair_ids.extend(cell_df['Pair_ID'].tolist())
                 
-               ac1, ac2 = st.columns(2)
-               channel = ac1.selectbox("Media Format & Attention Level", list(halflife_map.keys()), key=f"chan_{i}")
-               consideration = ac2.selectbox("Product Price / Consideration", list(lag_map.keys()), key=f"cons_{i}")
+                ac1, ac2 = st.columns(2)
+                channel = ac1.selectbox("Media Format & Attention Level", list(halflife_map.keys()), key=f"chan_{i}")
+                consideration = ac2.selectbox("Product Price / Consideration", list(lag_map.keys()), key=f"cons_{i}")
                 
-               hl_days = halflife_map[channel]
-               lag_days = lag_map[consideration]
+                hl_days = halflife_map[channel]
+                lag_days = lag_map[consideration]
                 
-               calc_cooldown = lag_days + (hl_days * 2)
-               calc_test_days = max(28, int(np.ceil((lag_days * 2) / 7.0) * 7))
+                calc_cooldown = lag_days + (hl_days * 2)
+                calc_test_days = max(28, int(np.ceil((lag_days * 2) / 7.0) * 7))
                 
-               t_dmas = cell_df['Treatment_DMA'].tolist()
-               c_dmas = cell_df['Control_DMA'].tolist()
+                t_dmas = cell_df['Treatment_DMA'].tolist()
+                c_dmas = cell_df['Control_DMA'].tolist()
                 
-               t_sum = daily_pivot[t_dmas].sum(axis=1)
-               c_sum = daily_pivot[c_dmas].sum(axis=1)
+                t_sum = daily_pivot[t_dmas].sum(axis=1)
+                c_sum = daily_pivot[c_dmas].sum(axis=1)
                 
-               if cadence == 'Weekly':
+                if cadence == 'Weekly':
                     t_sum = t_sum.resample('W-MON').sum()
                     c_sum = c_sum.resample('W-MON').sum()
                     periods = calc_test_days / 7.0
-               elif cadence == 'Monthly':
+                elif cadence == 'Monthly':
                     t_sum = t_sum.resample('MS').sum()
                     c_sum = c_sum.resample('MS').sum()
                     periods = calc_test_days / 30.0
-               else:
+                else:
                     periods = calc_test_days
                     
-               volume_scalar = t_sum.sum() / c_sum.sum() if c_sum.sum() > 0 else 1
-               c_scaled = c_sum * volume_scalar
+                volume_scalar = t_sum.sum() / c_sum.sum() if c_sum.sum() > 0 else 1
+                c_scaled = c_sum * volume_scalar
                 
-               diffs = t_sum - c_scaled
-               sd_diff = np.std(diffs)
+                diffs = t_sum - c_scaled
+                sd_diff = np.std(diffs)
                 
-               se_total = sd_diff * np.sqrt(periods) 
-               mde_absolute = 2.8 * se_total
+                se_total = sd_diff * np.sqrt(periods) 
+                mde_absolute = 2.8 * se_total
                 
-               baseline_t_vol = t_sum.mean() * periods
-               mde_pct = (mde_absolute / baseline_t_vol) * 100 if baseline_t_vol > 0 else 0
-               recommended_budget = mde_absolute / target_roas if target_roas > 0 else 0
+                baseline_t_vol = t_sum.mean() * periods
+                mde_pct = (mde_absolute / baseline_t_vol) * 100 if baseline_t_vol > 0 else 0
+                recommended_budget = mde_absolute / target_roas if target_roas > 0 else 0
                 
-               with st.expander(f"📊 View Economics & Export for: {cell_name}", expanded=True):
+                with st.expander(f"📊 View Economics & Export for: {cell_name}", expanded=True):
                     bc1, bc2, bc3, bc4 = st.columns(4)
                     bc1.metric("Active Run Time", f"{calc_test_days} Days")
                     bc2.metric("Adstock Cooldown", f"{calc_cooldown} Days")
                     bc3.metric("Incremental Sales Needed", f"${mde_absolute:,.0f} ({mde_pct:.1f}% Lift)")
                     budget_label = "Required Total Budget" if test_direction == "Scale-Up (Ads ON)" else "Spend to Withhold"
                     bc4.metric(budget_label, f"${recommended_budget:,.0f}")
-
-                    st.markdown("### Diminishing Returns Risk")
-                    if mde_pct <= 10:
-                            st.success(f"✅ **Highly Feasible (Requires {mde_pct:.1f}% Lift):** Safe to execute for these {len(alloc)} pairs. Low risk of ad saturation.")
-                    elif mde_pct <= 20:
-                            st.warning(f"⚠️ **Moderate Risk (Requires {mde_pct:.1f}% Lift):** You need a sizable lift. Ensure strong creative and manage frequency caps.")
-                    else:
-                            st.error(f"🚨 **High Risk of Saturation (Requires {mde_pct:.1f}% Lift):** The historical noise is too high. Trying to force this lift will likely cause ad fatigue before you hit statistical significance.")
                     
                     chart_data = pd.DataFrame({'Treatment': t_sum, 'Control (Scaled)': c_scaled}).reset_index()
                     fig = px.line(chart_data, x=date_col, y=['Treatment', 'Control (Scaled)'], title=f"Historical Baseline: {cell_name}", labels={'value':'Gross Sales', 'variable':'Group'})
@@ -301,7 +244,7 @@ def optimize_test_setup(results_df, daily_pivot, calc_test_days, target_roas):
                     
                     csv = cell_df.to_csv(index=False).encode('utf-8')
                     st.download_button(f"📥 Download Activation Map: {cell_name}", data=csv, file_name=f'test_cell_{i+1}.csv', mime='text/csv')
-                    st.divider()
+                st.divider()
         else:
             st.error(f"No pairs found. Try lowering the threshold.")
     else:
