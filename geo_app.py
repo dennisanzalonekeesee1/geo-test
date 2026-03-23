@@ -231,7 +231,7 @@ def optimize_test_setup(results_df, daily_pivot, calc_test_days, target_roas):
                 
                if max_available == 0:
                 st.error(f"0 {cadence} pairs left! None available for this cell.")
-                    continue
+               continue
                     
                 num_pairs = c3.number_input(f"Pairs to Auto-Select (Max {max_available})", 1, max_available, min(5, max_available), key=f"num_{i}")
                 target_roas = c4.number_input("Target Break-Even ROAS", 0.1, 20.0, 2.0, step=0.1, key=f"roas_{i}")
