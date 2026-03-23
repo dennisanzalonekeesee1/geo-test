@@ -301,7 +301,7 @@ def optimize_test_setup(results_df, daily_pivot, calc_test_days, target_roas):
                     
                     csv = cell_df.to_csv(index=False).encode('utf-8')
                     st.download_button(f"📥 Download Activation Map: {cell_name}", data=csv, file_name=f'test_cell_{i+1}.csv', mime='text/csv')
-                st.divider()
+                    st.divider()
         else:
             st.error(f"No pairs found. Try lowering the threshold.")
     else:
