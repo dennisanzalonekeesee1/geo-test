@@ -174,14 +174,27 @@ if app_mode == "1. Pre-Test Planner":
             }
             lag_map = {"Low (<$50, Impulse)": 1, "Medium ($50-$200)": 7, "High ($200+, Heavy research)": 14}
             
+            # --- NEW: OPTIMIZATION TOGGLE ---
+            auto_optimize = st.toggle("🤖 Auto-Optimize Cadence & Pairs for Lowest % Lift (MDE)", value=True)
+            if auto_optimize:
+                st.caption("The engine will simulate all possible combinations to find the exact cadence and number of pairs that mathematically minimizes your target % lift.")
+
             # --- PHASE A: GATHER ALL CELL SETTINGS FIRST ---
             cell_configs = []
             for i in range(num_cells):
                 st.markdown(f"### ⚙️ Settings for Test Cell {i+1}")
                 c1, c2, c3, c4 = st.columns(4)
                 cell_name = c1.text_input(f"Campaign/Cell Name", f"Campaign {i+1}", key=f"name_{i}")
-                cadence = c2.selectbox(f"Match Cadence", ["Daily", "Weekly", "Monthly"], key=f"cadence_{i}")
-                num_pairs = c3.number_input(f"Pairs to Auto-Select", 1, 50, 5, key=f"num_{i}")
+                
+                if not auto_optimize:
+                    cadence = c2.selectbox(f"Match Cadence", ["Daily", "Weekly", "Monthly"], key=f"cadence_{i}")
+                    num_pairs = c3.number_input(f"Pairs to Auto-Select", 1, 50, 5, key=f"num_{i}")
+                else:
+                    cadence = None # Will be populated by the optimizer
+                    num_pairs = None # Will be populated by the optimizer
+                    c2.info("Cadence: Auto")
+                    c3.info("Pairs: Auto")
+                    
                 target_roas = c4.number_input("Target Break-Even ROAS", 0.1, 20.0, 2.0, step=0.1, key=f"roas_{i}")
                 
                 ac1, ac2 = st.columns(2)
@@ -192,8 +205,86 @@ if app_mode == "1. Pre-Test Planner":
                     'id': i, 'name': cell_name, 'cadence': cadence, 'num_pairs': num_pairs,
                     'roas': target_roas, 'channel': channel, 'consideration': consideration
                 })
-            
-            # --- PHASE B: GREEDY VOLUME BALANCING (THE MAGIC) ---
+
+            # --- NEW: OPTIMIZATION ENGINE ---
+            if auto_optimize:
+                with st.spinner("Simulating combinations to find lowest % Lift..."):
+                    best_avg_mde = float('inf')
+                    best_cadence = "Daily"
+                    best_pairs = 1
+                    
+                    # Search grid: Test all cadences and pair counts
+                    for test_cadence in ["Daily", "Weekly", "Monthly"]:
+                        available_df = results_df[results_df['Matched_On'] == test_cadence]
+                        max_pairs_possible = len(available_df) // num_cells
+                        
+                        # We test from 1 pair up to a max of 30 per cell to find the sweet spot
+                        for test_pairs in range(1, min(max_pairs_possible + 1, 31)):
+                            
+                            # 1. Simulate Greedy Assignment
+                            sim_assignments = {c['id']: [] for c in cell_configs}
+                            sim_volumes = {c['id']: 0 for c in cell_configs}
+                            pool = available_df.sort_values(by='T_Volume', ascending=False).head(test_pairs * num_cells)
+                            
+                            for _, pair in pool.iterrows():
+                                eligible_cells = [c['id'] for c in cell_configs if len(sim_assignments[c['id']]) < test_pairs]
+                                if not eligible_cells: break
+                                target_cell_id = min(eligible_cells, key=lambda x: sim_volumes[x])
+                                sim_assignments[target_cell_id].append(pair)
+                                sim_volumes[target_cell_id] += pair['T_Volume']
+                                
+                            # 2. Simulate MDE Calculation
+                            combo_mdes = []
+                            for config in cell_configs:
+                                sim_df = pd.DataFrame(sim_assignments[config['id']])
+                                if sim_df.empty: 
+                                    combo_mdes.append(float('inf'))
+                                    continue
+                                    
+                                hl_days = halflife_map[config['channel']]
+                                lag_days = lag_map[config['consideration']]
+                                calc_test_days = max(28, int(np.ceil((lag_days * 2) / 7.0) * 7))
+                                
+                                t_dmas = sim_df['Treatment_DMA'].tolist()
+                                c_dmas = sim_df['Control_DMA'].tolist()
+                                t_sum = daily_pivot[t_dmas].sum(axis=1)
+                                c_sum = daily_pivot[c_dmas].sum(axis=1)
+                                
+                                if test_cadence == 'Weekly':
+                                    t_sum = t_sum.resample('W-MON').sum()
+                                    c_sum = c_sum.resample('W-MON').sum()
+                                    periods = calc_test_days / 7.0
+                                elif test_cadence == 'Monthly':
+                                    t_sum = t_sum.resample('MS').sum()
+                                    c_sum = c_sum.resample('MS').sum()
+                                    periods = calc_test_days / 30.0
+                                else:
+                                    periods = calc_test_days
+                                    
+                                volume_scalar = t_sum.sum() / c_sum.sum() if c_sum.sum() > 0 else 1
+                                c_scaled = c_sum * volume_scalar
+                                
+                                sd_diff = np.std(t_sum - c_scaled)
+                                mde_abs = 2.8 * (sd_diff * np.sqrt(periods))
+                                base_vol = t_sum.mean() * periods
+                                mde_pct = (mde_abs / base_vol) * 100 if base_vol > 0 else float('inf')
+                                combo_mdes.append(mde_pct)
+                                
+                            # 3. Evaluate if this combo is the new best
+                            avg_mde = np.mean(combo_mdes)
+                            if avg_mde < best_avg_mde:
+                                best_avg_mde = avg_mde
+                                best_cadence = test_cadence
+                                best_pairs = test_pairs
+                                
+                    # Apply the winning combo to our configs
+                    for config in cell_configs:
+                        config['cadence'] = best_cadence
+                        config['num_pairs'] = best_pairs
+                        
+                    st.success(f"✨ **Optimization Complete!** To minimize variance, the engine selected a **{best_cadence}** match cadence with **{best_pairs}** pairs per cell. (Predicted Average MDE: {best_avg_mde:.1f}%)")
+
+            # --- PHASE B: GREEDY VOLUME BALANCING (THE ACTUAL RUN) ---
             assigned_pair_ids = []
             cell_assignments = {i: pd.DataFrame() for i in range(num_cells)}
             
