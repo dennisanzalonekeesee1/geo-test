@@ -60,7 +60,9 @@ if app_mode == "1. Pre-Test Planner":
         zip_dma_file = st.file_uploader("Upload Zip-to-DMA Dict", type=["csv", "xlsx"])
         
         st.header("2. Match Settings")
-        min_corr = st.slider("Target Correlation Threshold", 0.70, 0.99, 0.85, 0.01)
+        # Move toggle here so it loads first, and use it to disable the slider!
+        auto_optimize = st.toggle("🤖 Auto-Optimize for Lowest Lift", value=True)
+        min_corr = st.slider("Target Correlation Threshold (Manual)", 0.70, 0.99, 0.85, 0.01, disabled=auto_optimize)
         
         st.markdown("### Verify Column Names")
         date_col = st.text_input("Date Column (Sales)", "Day")
@@ -178,11 +180,6 @@ if app_mode == "1. Pre-Test Planner":
                 "Immersive / Lean-Back (CTV, YouTube, TV, Audio)": 14
             }
             lag_map = {"Low (<$50, Impulse)": 1, "Medium ($50-$200)": 7, "High ($200+, Heavy research)": 14}
-            
-            # --- NEW: OPTIMIZATION TOGGLE ---
-            auto_optimize = st.toggle("🤖 Auto-Optimize Cadence, Pairs & Correlation for Lowest % Lift", value=True)
-            if auto_optimize:
-                st.caption("The engine will simulate all possible combinations to find the exact correlation floor, cadence, and number of pairs that mathematically minimizes your target % lift.")
 
             # --- PHASE A: GATHER ALL CELL SETTINGS FIRST ---
             cell_configs = []
@@ -219,8 +216,8 @@ if app_mode == "1. Pre-Test Planner":
                     best_pairs = 1
                     best_corr = min_corr # Defaults to your sidebar setting
                     
-                    # 1. Search Grid: Test correlations from the absolute floor (0.70) up to 0.98
-                    test_corrs = [round(c, 2) for c in np.arange(0.70, 0.99, 0.02)]
+                    # 1. Search Grid: Test EVERY correlation step (0.01) from 0.70 up to 0.99
+                    test_corrs = [round(c, 2) for c in np.arange(0.70, 1.00, 0.01)]
                     
                     for test_corr in test_corrs:
                         # Dynamically shrink the dating pool using the MASTER list, ignoring the sidebar
