@@ -7,8 +7,8 @@ import plotly.graph_objects as go
 
 st.set_page_config(page_title="Geo-Test OS", layout="wide")
 
-st.title("📍 Geo-Testing Operating System")
-st.markdown("End-to-End Market Matching, Multi-Cell Planning, and Post-Test Causal Measurement.")
+st.title("📍 Geo-Test App")
+st.markdown("Market Matching, Multi-Cell Planning, Post-Test Causal Measurement.")
 
 # --- SIDEBAR: NAVIGATION & UPLOADS ---
 with st.sidebar:
