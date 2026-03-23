@@ -233,53 +233,53 @@ def optimize_test_setup(results_df, daily_pivot, calc_test_days, target_roas):
                 st.error(f"0 {cadence} pairs left! None available for this cell.")
                continue
                     
-                num_pairs = c3.number_input(f"Pairs to Auto-Select (Max {max_available})", 1, max_available, min(5, max_available), key=f"num_{i}")
-                target_roas = c4.number_input("Target Break-Even ROAS", 0.1, 20.0, 2.0, step=0.1, key=f"roas_{i}")
+               num_pairs = c3.number_input(f"Pairs to Auto-Select (Max {max_available})", 1, max_available, min(5, max_available), key=f"num_{i}")
+               target_roas = c4.number_input("Target Break-Even ROAS", 0.1, 20.0, 2.0, step=0.1, key=f"roas_{i}")
                 
-                cell_df = available_df.head(num_pairs)
-                assigned_pair_ids.extend(cell_df['Pair_ID'].tolist())
+               cell_df = available_df.head(num_pairs)
+               assigned_pair_ids.extend(cell_df['Pair_ID'].tolist())
                 
-                ac1, ac2 = st.columns(2)
-                channel = ac1.selectbox("Media Format & Attention Level", list(halflife_map.keys()), key=f"chan_{i}")
-                consideration = ac2.selectbox("Product Price / Consideration", list(lag_map.keys()), key=f"cons_{i}")
+               ac1, ac2 = st.columns(2)
+               channel = ac1.selectbox("Media Format & Attention Level", list(halflife_map.keys()), key=f"chan_{i}")
+               consideration = ac2.selectbox("Product Price / Consideration", list(lag_map.keys()), key=f"cons_{i}")
                 
-                hl_days = halflife_map[channel]
-                lag_days = lag_map[consideration]
+               hl_days = halflife_map[channel]
+               lag_days = lag_map[consideration]
                 
-                calc_cooldown = lag_days + (hl_days * 2)
-                calc_test_days = max(28, int(np.ceil((lag_days * 2) / 7.0) * 7))
+               calc_cooldown = lag_days + (hl_days * 2)
+               calc_test_days = max(28, int(np.ceil((lag_days * 2) / 7.0) * 7))
                 
-                t_dmas = cell_df['Treatment_DMA'].tolist()
-                c_dmas = cell_df['Control_DMA'].tolist()
+               t_dmas = cell_df['Treatment_DMA'].tolist()
+               c_dmas = cell_df['Control_DMA'].tolist()
                 
-                t_sum = daily_pivot[t_dmas].sum(axis=1)
-                c_sum = daily_pivot[c_dmas].sum(axis=1)
+               t_sum = daily_pivot[t_dmas].sum(axis=1)
+               c_sum = daily_pivot[c_dmas].sum(axis=1)
                 
-                if cadence == 'Weekly':
+               if cadence == 'Weekly':
                     t_sum = t_sum.resample('W-MON').sum()
                     c_sum = c_sum.resample('W-MON').sum()
                     periods = calc_test_days / 7.0
-                elif cadence == 'Monthly':
+               elif cadence == 'Monthly':
                     t_sum = t_sum.resample('MS').sum()
                     c_sum = c_sum.resample('MS').sum()
                     periods = calc_test_days / 30.0
-                else:
+               else:
                     periods = calc_test_days
                     
-                volume_scalar = t_sum.sum() / c_sum.sum() if c_sum.sum() > 0 else 1
-                c_scaled = c_sum * volume_scalar
+               volume_scalar = t_sum.sum() / c_sum.sum() if c_sum.sum() > 0 else 1
+               c_scaled = c_sum * volume_scalar
                 
-                diffs = t_sum - c_scaled
-                sd_diff = np.std(diffs)
+               diffs = t_sum - c_scaled
+               sd_diff = np.std(diffs)
                 
-                se_total = sd_diff * np.sqrt(periods) 
-                mde_absolute = 2.8 * se_total
+               se_total = sd_diff * np.sqrt(periods) 
+               mde_absolute = 2.8 * se_total
                 
-                baseline_t_vol = t_sum.mean() * periods
-                mde_pct = (mde_absolute / baseline_t_vol) * 100 if baseline_t_vol > 0 else 0
-                recommended_budget = mde_absolute / target_roas if target_roas > 0 else 0
+               baseline_t_vol = t_sum.mean() * periods
+               mde_pct = (mde_absolute / baseline_t_vol) * 100 if baseline_t_vol > 0 else 0
+               recommended_budget = mde_absolute / target_roas if target_roas > 0 else 0
                 
-                with st.expander(f"📊 View Economics & Export for: {cell_name}", expanded=True):
+               with st.expander(f"📊 View Economics & Export for: {cell_name}", expanded=True):
                     bc1, bc2, bc3, bc4 = st.columns(4)
                     bc1.metric("Active Run Time", f"{calc_test_days} Days")
                     bc2.metric("Adstock Cooldown", f"{calc_cooldown} Days")
