@@ -161,65 +161,55 @@ if app_mode == "1. Pre-Test Planner":
                 st.dataframe(results_df, use_container_width=True)
 
 def optimize_test_setup(results_df, daily_pivot, calc_test_days, target_roas):
-    # This list must be indented 4 spaces from the 'def' line above
     optimization_results = []
     
-    # Test every cadence and every possible number of pairs
+    # Test every cadence and every possible number of pairs (up to 15 or max available)
     for cadence in ["Daily", "Weekly", "Monthly"]:
         cadence_df = results_df[results_df['Matched_On'] == cadence]
         max_p = min(len(cadence_df), 15)
         
-        if max_p == 0: 
-            continue
+        if max_p == 0: continue
             
         for n in range(1, max_p + 1):
-            # Selection: Get the top N pairs for this cadence
+            # Selection
             test_pairs = cadence_df.head(n)
             t_dmas = test_pairs['Treatment_DMA'].tolist()
             c_dmas = test_pairs['Control_DMA'].tolist()
             
-            # Aggregate Sales
+            # Data Prep
             t_sum = daily_pivot[t_dmas].sum(axis=1)
             c_sum = daily_pivot[c_dmas].sum(axis=1)
             
-            # Resample based on cadence to find the "quietest" signal
             if cadence == 'Weekly':
-                t_sum = t_sum.resample('W-MON').sum()
-                c_sum = c_sum.resample('W-MON').sum()
+                t_sum, c_sum = t_sum.resample('W-MON').sum(), c_sum.resample('W-MON').sum()
                 periods = calc_test_days / 7.0
             elif cadence == 'Monthly':
-                t_sum = t_sum.resample('MS').sum()
-                c_sum = c_sum.resample('MS').sum()
+                t_sum, c_sum = t_sum.resample('MS').sum(), c_sum.resample('MS').sum()
                 periods = calc_test_days / 30.0
             else:
                 periods = calc_test_days
 
-            # Calculate Variance and MDE
-            # We scale the control to match the treatment volume first
+            # Math logic (Simplified MDE)
             scalar = t_sum.sum() / c_sum.sum() if c_sum.sum() > 0 else 1
             diffs = t_sum - (c_sum * scalar)
             sd_diff = np.std(diffs)
-            
-            # 2.8 is the standard multiplier for 80% power and 95% confidence
             mde_abs = 2.8 * (sd_diff * np.sqrt(periods))
             baseline_vol = t_sum.mean() * periods
-            
             mde_pct = (mde_abs / baseline_vol) * 100 if baseline_vol > 0 else 999
             
             optimization_results.append({
                 'Cadence': cadence,
                 'Pairs': n,
                 'Lift_Pct': mde_pct,
-                'Budget': mde_abs / target_roas if target_roas > 0 else 0
+                'Budget': mde_abs / target_roas
             })
 
-    # Turn results into a DataFrame and find the minimum Lift %
     opt_df = pd.DataFrame(optimization_results)
     if not opt_df.empty:
-        return opt_df.sort_values("Lift_Pct").iloc[0] 
+        return opt_df.sort_values("Lift_Pct").iloc[0] # Return the one with lowest Lift %
     return None
             
-            st.header("Step 2: Multi-Cell Test Builder")
+    st.header("Step 2: Multi-Cell Test Builder")
             num_cells = st.number_input("How many separate test cells are you running?", min_value=1, max_value=5, value=1)
             
             assigned_pair_ids = [] 
