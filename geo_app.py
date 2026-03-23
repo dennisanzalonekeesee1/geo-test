@@ -218,7 +218,7 @@ def optimize_test_setup(results_df, daily_pivot, calc_test_days, target_roas):
                 "Feed-Based Social (Meta, TikTok)": 7, 
                 "Immersive / Lean-Back (CTV, YouTube, TV, Audio)": 14
             }
-            lag_map = {"Low (<$50, Impulse)": 1, "Medium ($50-$200)": 7, "High ($200+, Heavy research)": 14}
+    lag_map = {"Low (<$50, Impulse)": 1, "Medium ($50-$200)": 7, "High ($200+, Heavy research)": 14}
             
             for i in range(num_cells):
                 st.markdown(f"### 🧪 Test Cell {i+1}")
