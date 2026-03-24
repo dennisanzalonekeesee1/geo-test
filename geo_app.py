@@ -136,6 +136,10 @@ if app_mode == "1. Pre-Test Planner":
         all_pairs = daily_pairs + weekly_pairs + monthly_pairs
         results_df = pd.DataFrame(all_pairs)
         if not results_df.empty:
+            # NEW: Calculate volume for balancing logic later
+            t_vols = daily_pivot.sum()
+            results_df['T_Volume'] = results_df['Treatment_DMA'].map(t_vols)
+
             results_df.index = results_df.index + 1
             results_df.index.name = 'Pair_ID'
             results_df = results_df.reset_index()
@@ -163,7 +167,6 @@ if app_mode == "1. Pre-Test Planner":
             st.header("Step 2: Multi-Cell Test Builder")
             num_cells = st.number_input("How many separate test cells are you running?", min_value=1, max_value=5, value=1)
             
-            assigned_pair_ids = [] 
             halflife_map = {
                 "High-Intent DR (Search, Shopping)": 3, 
                 "Feed-Based Social (Meta, TikTok)": 7, 
@@ -171,31 +174,74 @@ if app_mode == "1. Pre-Test Planner":
             }
             lag_map = {"Low (<$50, Impulse)": 1, "Medium ($50-$200)": 7, "High ($200+, Heavy research)": 14}
             
+            # --- PHASE A: GATHER ALL CELL SETTINGS FIRST ---
+            cell_configs = []
             for i in range(num_cells):
-                st.markdown(f"### 🧪 Test Cell {i+1}")
+                st.markdown(f"### ⚙️ Settings for Test Cell {i+1}")
                 c1, c2, c3, c4 = st.columns(4)
                 cell_name = c1.text_input(f"Campaign/Cell Name", f"Campaign {i+1}", key=f"name_{i}")
                 cadence = c2.selectbox(f"Match Cadence", ["Daily", "Weekly", "Monthly"], key=f"cadence_{i}")
-                
-                available_df = results_df[(results_df['Matched_On'] == cadence) & (~results_df['Pair_ID'].isin(assigned_pair_ids))]
-                max_available = len(available_df)
-                
-                if max_available == 0:
-                    st.error(f"0 {cadence} pairs left! None available for this cell.")
-                    continue
-                    
-                num_pairs = c3.number_input(f"Pairs to Auto-Select (Max {max_available})", 1, max_available, min(5, max_available), key=f"num_{i}")
+                num_pairs = c3.number_input(f"Pairs to Auto-Select", 1, 50, 5, key=f"num_{i}")
                 target_roas = c4.number_input("Target Break-Even ROAS", 0.1, 20.0, 2.0, step=0.1, key=f"roas_{i}")
-                
-                cell_df = available_df.head(num_pairs)
-                assigned_pair_ids.extend(cell_df['Pair_ID'].tolist())
                 
                 ac1, ac2 = st.columns(2)
                 channel = ac1.selectbox("Media Format & Attention Level", list(halflife_map.keys()), key=f"chan_{i}")
                 consideration = ac2.selectbox("Product Price / Consideration", list(lag_map.keys()), key=f"cons_{i}")
                 
-                hl_days = halflife_map[channel]
-                lag_days = lag_map[consideration]
+                cell_configs.append({
+                    'id': i, 'name': cell_name, 'cadence': cadence, 'num_pairs': num_pairs,
+                    'roas': target_roas, 'channel': channel, 'consideration': consideration
+                })
+            
+            # --- PHASE B: GREEDY VOLUME BALANCING (THE MAGIC) ---
+            assigned_pair_ids = []
+            cell_assignments = {i: pd.DataFrame() for i in range(num_cells)}
+            
+            for current_cadence in ["Daily", "Weekly", "Monthly"]:
+                competing_cells = [c for c in cell_configs if c['cadence'] == current_cadence]
+                if not competing_cells: continue
+                
+                total_pairs_needed = sum(c['num_pairs'] for c in competing_cells)
+                available_df = results_df[(results_df['Matched_On'] == current_cadence) & (~results_df['Pair_ID'].isin(assigned_pair_ids))]
+                
+                if total_pairs_needed > len(available_df):
+                    st.error(f"Not enough {current_cadence} pairs to fill all requests. You need {total_pairs_needed}, but only {len(available_df)} are available.")
+                    st.stop()
+                    
+                # Sort pool by Volume descending so we deal out the largest markets first
+                pool = available_df.sort_values(by='T_Volume', ascending=False).head(total_pairs_needed)
+                
+                # Track current volume per cell to keep them balanced
+                cell_volumes = {c['id']: 0 for c in competing_cells}
+                assigned_rows = {c['id']: [] for c in competing_cells}
+                
+                for _, pair in pool.iterrows():
+                    # Check which cells still need pairs
+                    eligible_cells = [c['id'] for c in competing_cells if len(assigned_rows[c['id']]) < c['num_pairs']]
+                    if not eligible_cells: break
+                    
+                    # Give the pair to the eligible cell with the LOWEST current total volume
+                    target_cell_id = min(eligible_cells, key=lambda x: cell_volumes[x])
+                    
+                    assigned_rows[target_cell_id].append(pair)
+                    cell_volumes[target_cell_id] += pair['T_Volume']
+                    assigned_pair_ids.append(pair['Pair_ID'])
+                    
+                # Convert list of rows back to DataFrames
+                for c in competing_cells:
+                    cell_assignments[c['id']] = pd.DataFrame(assigned_rows[c['id']])
+
+            st.divider()
+
+            # --- PHASE C: CALCULATE ECONOMICS & DISPLAY ---
+            for config in cell_configs:
+                i = config['id']
+                cell_df = cell_assignments[i]
+                cell_name = config['name']
+                cadence = config['cadence']
+                
+                hl_days = halflife_map[config['channel']]
+                lag_days = lag_map[config['consideration']]
                 
                 calc_cooldown = lag_days + (hl_days * 2)
                 calc_test_days = max(28, int(np.ceil((lag_days * 2) / 7.0) * 7))
@@ -228,8 +274,9 @@ if app_mode == "1. Pre-Test Planner":
                 
                 baseline_t_vol = t_sum.mean() * periods
                 mde_pct = (mde_absolute / baseline_t_vol) * 100 if baseline_t_vol > 0 else 0
-                recommended_budget = mde_absolute / target_roas if target_roas > 0 else 0
+                recommended_budget = mde_absolute / config['roas'] if config['roas'] > 0 else 0
                 
+                st.markdown(f"### 🧪 Results: {cell_name}")
                 with st.expander(f"📊 View Economics & Export for: {cell_name}", expanded=True):
                     bc1, bc2, bc3, bc4 = st.columns(4)
                     bc1.metric("Active Run Time", f"{calc_test_days} Days")
@@ -243,7 +290,7 @@ if app_mode == "1. Pre-Test Planner":
                     st.plotly_chart(fig, use_container_width=True)
                     
                     csv = cell_df.to_csv(index=False).encode('utf-8')
-                    st.download_button(f"📥 Download Activation Map: {cell_name}", data=csv, file_name=f'test_cell_{i+1}.csv', mime='text/csv')
+                    st.download_button(f"📥 Download Activation Map: {cell_name}", data=csv, file_name=f'test_cell_{i+1}.csv', mime='text/csv', key=f"dl_{i}")
                 st.divider()
         else:
             st.error(f"No pairs found. Try lowering the threshold.")
