@@ -236,7 +236,7 @@ if app_mode == "1. Pre-Test Planner":
                     bc2.metric("Adstock Cooldown", f"{calc_cooldown} Days")
                     bc3.metric("Incremental Sales Needed", f"${mde_absolute:,.0f} ({mde_pct:.1f}% Lift)")
                     budget_label = "Required Total Budget" if test_direction == "Scale-Up (Ads ON)" else "Spend to Withhold"
-                        bc4.metric(budget_label, f"${recommended_budget:,.0f}")
+                    bc4.metric(budget_label, f"${recommended_budget:,.0f}")
                     
                     chart_data = pd.DataFrame({'Treatment': t_sum, 'Control (Scaled)': c_scaled}).reset_index()
                     fig = px.line(chart_data, x=date_col, y=['Treatment', 'Control (Scaled)'], title=f"Historical Baseline: {cell_name}", labels={'value':'Gross Sales', 'variable':'Group'})
