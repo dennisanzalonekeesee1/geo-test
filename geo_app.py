@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import random
 import plotly.express as px
+import plotly.graph_objects as go
 
 # 1. Access the password from secrets
 VALID_PASSWORD = st.secrets["auth"]["password"]
