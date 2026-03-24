@@ -8,7 +8,7 @@ import plotly.express as px
 VALID_PASSWORD = st.secrets["auth"]["password"]
 
 def check_auth():
-    """Returns True if the user has entered the correct password."""
+    """Returns True if the user has entered the correct password."""
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
 
