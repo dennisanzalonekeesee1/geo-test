@@ -29,9 +29,9 @@ def check_auth():
 if not check_auth():
     st.stop()
 
-# --- EVERYTHING BELOW THIS LINE IS YOUR PROTECTED CODE ---
+# --- CODE ---
 st.success("Access Granted.")
-# Your actual work starts here...
+# start...
 
 st.set_page_config(page_title="Geo-Test App", layout="wide")
 
@@ -194,7 +194,7 @@ if app_mode == "1. Pre-Test Planner":
                     'roas': target_roas, 'channel': channel, 'consideration': consideration
                 })
             
-            # --- PHASE B: GREEDY VOLUME BALANCING (THE MAGIC) ---
+            # --- PHASE B: GREEDY VOLUME BALANCING ---
             assigned_pair_ids = []
             cell_assignments = {i: pd.DataFrame() for i in range(num_cells)}
             
@@ -346,7 +346,7 @@ elif app_mode == "2. Post-Test Measurement":
             df_test = df[df[dma_col2].isin(t_dmas + c_dmas)]
             daily_pivot = df_test.pivot_table(index=date_col2, columns=dma_col2, values=sales_col2, aggfunc='sum').fillna(0)
             
-            # Ensure missing DMAs are padded with 0s
+            # Ensuring missing DMAs are padded with 0s
             for d in (t_dmas + c_dmas):
                 if d not in daily_pivot.columns: daily_pivot[d] = 0
             
@@ -379,7 +379,7 @@ elif app_mode == "2. Post-Test Measurement":
                 # Fit 1D polynomial (y = mx + b)
                 slope, intercept = np.polyfit(X_pre, Y_pre, 1)
                 
-                # Predict Counterfactual for the ENTIRE timeline
+                # Predicting Counterfactual for the ENTIRE timeline
                 model_data['Counterfactual (Predicted)'] = (model_data['Control_Actual'] * slope) + intercept
                 model_data['Counterfactual (Predicted)'] = model_data['Counterfactual (Predicted)'].clip(lower=0) 
                 
@@ -441,7 +441,7 @@ elif app_mode == "2. Post-Test Measurement":
                 fig1.add_trace(go.Scatter(x=model_data.index, y=model_data['Treatment_Actual'], mode='lines', name='Actual Treatment Sales', line=dict(color='#00b4d8', width=3)))
                 fig1.add_trace(go.Scatter(x=model_data.index, y=model_data['Counterfactual (Predicted)'], mode='lines', name='Counterfactual (No Ads)', line=dict(color='#ff9f1c', width=3, dash='dash')))
                 
-                # Add shaded test window
+                # Added shaded test window
                 fig1.add_vrect(x0=start_dt, x1=end_dt, fillcolor="green", opacity=0.1, line_width=0, annotation_text="Active Test & Cooldown Period", annotation_position="top left")
                 
                 fig1.update_layout(title=f"Sales Impact: Actual vs. Predicted ({cadence} Level)", yaxis_title="Gross Sales ($)", hovermode="x unified")
